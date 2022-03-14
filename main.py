@@ -1,108 +1,61 @@
-from sklearn.ensemble import RandomForestClassifier as RFC
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import *
-import numpy as np
-import pandas as pd
+import streamlit as st
+import pickle
 from os.path import exists
-import seaborn as sns
-import matplotlib.pyplot as plt
-from matplotlib.ticker import MultipleLocator
-import gradio as gr
+from streamlit_drawable_canvas import st_canvas
+import pandas as pd
 
-objects = {
-    0: "Bowtie",
-    1: "Broom",
-    2: "Crown",
-    3: "EiffelTower",
-    4: "HotAirBalloon",
-    5: "HousePlant",
-    6: "Bed",
-    7: "Cat",
-    8: "Couch",
-    9: "Dog",
-    10: "Hand",
-    11: "Hat",
-    12: "Tractor"
-}
+st.set_page_config(page_title="Doodle Classifier", layout="centered", initial_sidebar_state="collapsed")
 
-data = pd.DataFrame()
-
-# Load data from all npy files
-for object in objects:
-
-    # Load the numpy file
-    object_data = None
-    if exists(f"./data/{objects[object]}.npy"):
-        object_data = np.load(f"./data/{objects[object]}.npy")
-    else:
-        object_data = np.load(
-            f"./DoodleClassifierModel/data/{objects[object]}.npy")
-
-    # Add labels to data
-    temp = pd.DataFrame(object_data)
-    temp["Label"] = object
-
-    # Append object data to main dataframe
-    data = pd.concat([data, temp], ignore_index=True)
-
-
-# Train test validation split
-x_train, x_test, y_train, y_test = train_test_split(
-    data.loc[:, data.columns != "Label"], data["Label"], test_size=0.33, random_state=69)
-
-model = RFC(n_estimators=100, max_depth=None, random_state=420)
-model.fit(x_train, y_train)
-predictions = model.predict(x_test)
-
-def show_confusion_matrix():
-    # Create labels
-    labels = list(objects.keys())
-
-    # Initialize confusion matrix
-    cm = confusion_matrix(y_true=y_test, y_pred=predictions, labels=labels)
-    print(cm)
-
-    # Initialize figure
-    fig = plt.figure()
-    ax = fig.add_subplot(1, 1, 1)
-    cax = ax.matshow(cm)
-    plt.title('Confusion matrix of the classifier')
-
-    fig.colorbar(cax)
-
-    # "If you have more than a few categories, Matplotlib decides to label the axes incorrectly - you have to force it to label every cell." - https://stackoverflow.com/questions/19233771/sklearn-plot-confusion-matrix-with-labels
-    ax.xaxis.set_major_locator(MultipleLocator(1))
-    ax.yaxis.set_major_locator(MultipleLocator(1))
-    ax.set_xticklabels([''] + list(objects.values()))
-    ax.set_yticklabels([''] + list(objects.values()))
-    ax.tick_params(labelrotation=45)
-    plt.xlabel('Predicted')
-    plt.ylabel('True')
-
-    # Draw figure
-    plt.show()
-
-
-# show_confusion_matrix()
+# Load model from .pkl file
+model = None
+if exists("./model.pkl"):
+    model = pickle.load(open("model.pkl", 'rb'))
+else:
+    print("model.pkl not found, please run model.py file to generate this!")
 
 def make_prediction(pred):
-    """Makes a prediction using the model, takes in a pandas series, aka a single row from a pandas df, or an array of the pixel values"""
+    """Makes a prediction using the model, takes in a pandas series, i.e. a single row from a pandas df, or an array of the pixel values"""
     return model.predict_proba(pred)
 
-# print(make_prediction([data.iloc[2001].drop("Label")]))
+st.write("Hello world!")
 
-# Save the model in a .pkl
-import pickle
+# Define drawing mode for canvas
+drawing_mode = st.sidebar.selectbox(
+    "Drawing tool:", ("point", "freedraw", "line", "rect", "circle", "transform")
+)
 
-# with open('model.pkl','wb') as f:
-#     pickle.dump(model, f)
+# Other canvas parameters
+stroke_width = st.sidebar.slider("Stroke width: ", 1, 25, 3)
+if drawing_mode == 'point':
+    point_display_radius = st.sidebar.slider("Point display radius: ", 1, 25, 3)
+stroke_color = st.sidebar.color_picker("Stroke color hex: ")
+bg_color = st.sidebar.color_picker("Background color hex: ", "#eee")
+bg_image = st.sidebar.file_uploader("Background image:", type=["png", "jpg"])
+realtime_update = st.sidebar.checkbox("Update in realtime", True)
 
 
-def classify(input):
-    data = input.reshape(1, -1)
-    prediction = model.predict_proba(data).tolist()[0]
-    return {f"{objects[i]} ({i})": prediction[i] for i in range(len(objects))}
+# Create a canvas component
+canvas_result = st_canvas(
+    fill_color="rgba(255, 255, 255, 0.0)",  # Fixed fill color with some opacity
+    stroke_width=15,
+    stroke_color="#000",
+    background_color="#eee",
+    background_image=None,
+    update_streamlit=realtime_update,
+    height=500,
+    width=500,
+    drawing_mode="freedraw",
+    point_display_radius=point_display_radius if drawing_mode == 'point' else 0,
+    key="canvas",
+)
 
-label = gr.outputs.Label(num_top_classes=len(objects), type="confidences")
-interface = gr.Interface(fn=classify, inputs="sketchpad", outputs=label, live=True)
-interface.launch()
+# Do something interesting with the image data and paths
+if canvas_result.image_data is not None:
+    st.image(canvas_result.image_data)
+if canvas_result.json_data is not None:
+    objects = pd.json_normalize(canvas_result.json_data["objects"]) # need to convert obj to str because PyArrow
+    for col in objects.select_dtypes(include=['object']).columns:
+        objects[col] = objects[col].astype("str")
+    st.dataframe(objects)
+
+print(canvas_result.image_data[0])
